@@ -1,0 +1,802 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <link rel="stylesheet" href="style.css" type="text/css"/>
+    <title>Interactive 3D</title>
+    <meta http-equiv="content-type" content="text/html; charset=windows-1252">
+
+    <script type="text/javascript" src="glMatrix.js?dl=0"></script>
+    <script type="text/javascript" src="webgl-utils.js?dl=0"></script>
+    <script type="text/javascript" src="branch1BarycentricData.js?dl=0"></script>
+
+    <script type="text/javascript">
+    var gl;
+    var branchOneVertexPositionBuffer;
+    var branchOneNormalBuffer;
+    var branchOneVertexColorBuffer;
+    var branchOneVertexIndexBuffer;
+    var branchOneBarycentricBuffer;
+    var branchTwoVertexPositionBuffer;
+    var branchTwoNormalBuffer;
+    var branchTwoVertexColorBuffer;
+    var branchTwoVertexIndexBuffer;
+    var branchTwoBarycentricBuffer;
+    var branchThreeVertexPositionBuffer;
+    var branchThreeNormalBuffer;
+    var branchThreeVertexColorBuffer;
+    var branchThreeVertexIndexBuffer;
+    var branchThreeBarycentricBuffer;
+    var lineVertexPositionBuffer;
+    var lineVertexColorBuffer;
+
+    var mvMatrix = mat4.create();
+    var mvMatrixStack = [];
+    var pMatrix = mat4.create();
+    var shaderProgram;
+        
+    var xRot = 90;
+    var xSpeed = 3;
+    var yRot = 0;
+    var ySpeed = -3;
+    var z = -5.0;
+    var currentlyPressedKeys = {};
+   
+    function initGL(canvas) {
+        try {
+            gl = canvas.getContext("experimental-webgl");
+            gl.viewportWidth = canvas.width;
+            gl.viewportHeight = canvas.height;
+            gl.getExtension("OES_standard_derivatives");
+         } catch (e) {
+        }
+        if (!gl) {
+            alert("Could not initialise WebGL, sorry :-(");
+        }
+        return gl;
+       
+        }
+    
+    function getShader(gl, id) {
+        var shaderScript = document.getElementById(id);
+        if (!shaderScript) {
+            return null;
+        }
+        var str = "";
+        var k = shaderScript.firstChild;
+        while (k) {
+            if (k.nodeType === 3) {
+                str += k.textContent;
+            }
+            k = k.nextSibling;
+        }
+        var shader;
+        if (shaderScript.type === "x-shader/x-fragment") {
+            shader = gl.createShader(gl.FRAGMENT_SHADER);
+        } else if (shaderScript.type === "x-shader/x-vertex") {
+            shader = gl.createShader(gl.VERTEX_SHADER);
+        } else {
+            return null;
+        }
+        gl.shaderSource(shader, str);
+        gl.compileShader(shader);
+        if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+            alert(gl.getShaderInfoLog(shader));
+            return null;
+        }
+        return shader;
+    }
+   
+    function initShaders() {
+        var fragmentShader = getShader(gl, "shader-fs");
+        var vertexShader = getShader(gl, "shader-vs");
+        shaderProgram = gl.createProgram();
+        gl.attachShader(shaderProgram, vertexShader);
+        gl.attachShader(shaderProgram, fragmentShader);
+        gl.linkProgram(shaderProgram);
+        if (!gl.getProgramParameter(shaderProgram, gl.LINK_STATUS)) {
+            alert("Could not initialise shaders");
+        }
+        gl.useProgram(shaderProgram);
+        shaderProgram.vertexPositionAttribute = gl.getAttribLocation(shaderProgram,
+            "aVertexPosition");
+        gl.enableVertexAttribArray(shaderProgram.vertexPositionAttribute);
+        shaderProgram.vertexNormalAttribute = gl.getAttribLocation(shaderProgram, 
+            "aVertexNormal");
+        gl.enableVertexAttribArray(shaderProgram.vertexNormalAttribute);
+        
+        shaderProgram.vertexColorAttribute =
+                gl.getAttribLocation(shaderProgram, "aVertexColor");        
+        gl.enableVertexAttribArray(shaderProgram.vertexColorAttribute);
+        
+        shaderProgram.vertexBarycentricAttribute =
+                gl.getAttribLocation(shaderProgram, "aVertexBarycentric");        
+        gl.enableVertexAttribArray(shaderProgram.vertexBarycentricAttribute);
+           
+        shaderProgram.pMatrixUniform = gl.getUniformLocation(shaderProgram, "uPMatrix");
+        shaderProgram.mvMatrixUniform = gl.getUniformLocation(shaderProgram, "uMVMatrix");
+        shaderProgram.nMatrixUniform = gl.getUniformLocation(shaderProgram, "uNMatrix");
+        shaderProgram.useLightingUniform = gl.getUniformLocation(shaderProgram, "uUseLighting");
+        shaderProgram.useMeshUniform = gl.getUniformLocation(shaderProgram, "uUseMesh");
+        shaderProgram.ambientColorUniform = gl.getUniformLocation(shaderProgram, "uAmbientColor");
+        shaderProgram.lightingDirectionUniform = 
+                gl.getUniformLocation(shaderProgram, "uLightingDirection");
+        shaderProgram.directionalColorUniform =
+                gl.getUniformLocation(shaderProgram, "uDirectionalColor");
+    }
+    
+    function mvPushMatrix() {
+        var copy = mat4.create();
+        mat4.set(mvMatrix, copy);
+        mvMatrixStack.push(copy);
+    }
+    
+    function mvPopMatrix() {
+        if (mvMatrixStack.length === 0) {
+            throw "Invalid popMatrix!";
+        }
+        mvMatrix = mvMatrixStack.pop();
+    }
+    
+    function setMatrixUniforms() {
+        gl.uniformMatrix4fv(shaderProgram.pMatrixUniform, false, pMatrix);
+        gl.uniformMatrix4fv(shaderProgram.mvMatrixUniform, false, mvMatrix);
+        var normalMatrix = mat3.create();
+        mat4.toInverseMat3(mvMatrix, normalMatrix);
+        mat3.transpose(normalMatrix);
+        gl.uniformMatrix3fv(shaderProgram.nMatrixUniform, false, normalMatrix);
+    }
+    
+    function degToRad(degrees) {
+        return degrees * Math.PI / 180;
+    }
+    
+    
+    
+    function initBuffers() {
+//
+// Set up buffer for line
+//
+     
+        
+        lineVertexPositionBuffer = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, lineVertexPositionBuffer);
+        
+        var vertices = [
+             0,0,0,
+              5,0,0,
+              0,0,0,
+               0,5,0,
+               0,0,0,
+               0,0,-5
+                  ];
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vertices), gl.STATIC_DRAW);
+        lineVertexPositionBuffer.itemSize = 3;
+        lineVertexPositionBuffer.numItems =6;
+// 
+// Set up color for the lines
+//
+        lineVertexColorBuffer = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, lineVertexColorBuffer);
+        var colors = [
+            1.0, 0.0, 0.0, 0.81,
+            0.0, 1.0, 0.0, 0.81,
+            0.0, 0.0, 1.0, 0.81,
+            0.5,0.5,0.5,.81,
+            0,0,1,1,
+            0,0,1,1
+        ];
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(colors),
+        gl.STATIC_DRAW);
+        lineVertexColorBuffer.itemSize = 4;
+        lineVertexColorBuffer.numItems = 6;  
+  
+//
+// first branch
+//
+        branchOneVertexPositionBuffer = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, branchOneVertexPositionBuffer);
+       
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(branch1DataPoints),
+            gl.STATIC_DRAW);
+        // enter the size of each vertex (3) for 3D 
+        branchOneVertexPositionBuffer.itemSize = 3;
+        // enter the number of verticies for numItems
+        branchOneVertexPositionBuffer.numItems = (branch1DataPoints.length)/3;
+//        
+// set up color data for first branch
+//
+        branchOneVertexColorBuffer = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, branchOneVertexColorBuffer);
+        colors = [];
+        for (var i=0; i < branch1DataPoints.length/3; i++) {
+      //      colors = colors.concat([Math.random(),Math.random(),Math.random(), 1]);
+              colors=colors.concat([0.90045, 0.0204013, 0.0301823,1]);
+        }
+          
+         gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(colors),
+            gl.STATIC_DRAW);
+        // enter size of color buffer (4)    
+        branchOneVertexColorBuffer.itemSize = 4;
+        // enter the number of color specs of size 4 each
+        branchOneVertexColorBuffer.numItems = branch1DataPoints.length/3;  
+//
+// now set up index buffer for function
+//
+       branchOneIndexBuffer=gl.createBuffer();
+       gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,branchOneIndexBuffer);
+        
+        gl.bufferData(gl.ELEMENT_ARRAY_BUFFER,new Uint16Array(branch1IndexPoints),
+        gl.STATIC_DRAW);
+        branchOneIndexBuffer.itemSize=1;
+        // enter total number of indicies
+        branchOneIndexBuffer.numItems=branch1IndexPoints.length;  
+//
+// now set up normal buffer
+//
+       branchOneNormalBuffer=gl.createBuffer();
+       gl.bindBuffer(gl.ARRAY_BUFFER, branchOneNormalBuffer);
+       
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(branch1NormalPoints),
+            gl.STATIC_DRAW);
+        // enter the size of each vertex (3) for 3D 
+        branchOneNormalBuffer.itemSize = 3;
+        // enter the number of verticies for numItems
+        branchOneNormalBuffer.numItems = (branch1NormalPoints.length)/3;
+//
+// set up barycentric
+//
+       branchOneBarycentricBuffer=gl.createBuffer();
+       gl.bindBuffer(gl.ARRAY_BUFFER, branchOneBarycentricBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(branch1BarycentricPoints),
+            gl.STATIC_DRAW);
+        // enter the size of each vertex (9) for 3D 
+        branchOneBarycentricBuffer.itemSize = 3;
+        // enter the number of verticies for numItems
+        branchOneBarycentricBuffer.numItems = branch1BarycentricPoints.Length/3;
+//
+// second branch
+//
+        branchTwoVertexPositionBuffer = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, branchTwoVertexPositionBuffer);
+       
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(branch2DataPoints),
+            gl.STATIC_DRAW);
+        // enter the size of each vertex (3) for 3D 
+        branchTwoVertexPositionBuffer.itemSize = 3;
+        // enter the number of verticies for numItems
+        branchTwoVertexPositionBuffer.numItems = (branch2DataPoints.length)/3;
+//        
+// set up color data for first branch
+//
+        branchTwoVertexColorBuffer = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, branchTwoVertexColorBuffer);
+        colors = [];
+        for (var i=0; i < branch1DataPoints.length/3; i++) {
+      //      colors = colors.concat([Math.random(),Math.random(),Math.random(), 1]);
+              colors=colors.concat([0.829938, 0.725154, 1,1]);
+        }
+            
+         gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(colors),
+            gl.STATIC_DRAW);
+        // enter size of color buffer (4)    
+        branchTwoVertexColorBuffer.itemSize = 4;
+        // enter the number of color specs of size 4 each
+        branchTwoVertexColorBuffer.numItems = branch2DataPoints.length/3;  
+//
+// now set up index buffer for function
+//
+       branchTwoIndexBuffer=gl.createBuffer();
+       gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,branchTwoIndexBuffer);
+        
+        gl.bufferData(gl.ELEMENT_ARRAY_BUFFER,new Uint16Array(branch2IndexPoints),
+        gl.STATIC_DRAW);
+        branchTwoIndexBuffer.itemSize=1;
+        // enter total number of indicies
+        branchTwoIndexBuffer.numItems=branch2IndexPoints.length;  
+//
+// now set up normal buffer
+//
+       branchTwoNormalBuffer=gl.createBuffer();
+       gl.bindBuffer(gl.ARRAY_BUFFER, branchTwoNormalBuffer);
+       
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(branch2NormalPoints),
+            gl.STATIC_DRAW);
+        // enter the size of each vertex (3) for 3D 
+        branchTwoNormalBuffer.itemSize = 3;
+        // enter the number of verticies for numItems
+        branchTwoNormalBuffer.numItems = (branch2NormalPoints.length)/3;
+//
+// set up barycentric
+//
+       branchTwoBarycentricBuffer=gl.createBuffer();
+       gl.bindBuffer(gl.ARRAY_BUFFER, branchTwoBarycentricBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(branch2BarycentricPoints),
+            gl.STATIC_DRAW);
+        // enter the size of each vertex (9) for 3D 
+        branchTwoBarycentricBuffer.itemSize = 3;
+        // enter the number of verticies for numItems
+        branchTwoBarycentricBuffer.numItems = branch2BarycentricPoints.Length/3;
+//
+// now do third branch
+//
+        branchThreeVertexPositionBuffer = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, branchThreeVertexPositionBuffer);
+       
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(branch3DataPoints),
+            gl.STATIC_DRAW);
+        // enter the size of each vertex (3) for 3D 
+        branchThreeVertexPositionBuffer.itemSize = 3;
+        // enter the number of verticies for numItems
+        branchThreeVertexPositionBuffer.numItems = (branch3DataPoints.length)/3;
+//        
+// set up color data for first branch
+//
+        branchThreeVertexColorBuffer = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, branchThreeVertexColorBuffer);
+        colors = [];
+        for (var i=0; i < branch1DataPoints.length/3; i++) {
+    //        colors = colors.concat([Math.random(),Math.random(),Math.random(), 1]);
+              colors=colors.concat([1, 0.511666, 0.141085,1]);
+        }
+           
+         gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(colors),
+            gl.STATIC_DRAW);
+        // enter size of color buffer (4)    
+        branchThreeVertexColorBuffer.itemSize = 4;
+        // enter the number of color specs of size 4 each
+        branchThreeVertexColorBuffer.numItems = branch3DataPoints.length/3;  
+//
+// now set up index buffer for function
+//
+       branchThreeIndexBuffer=gl.createBuffer();
+       gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,branchThreeIndexBuffer);
+        
+        gl.bufferData(gl.ELEMENT_ARRAY_BUFFER,new Uint16Array(branch3IndexPoints),
+        gl.STATIC_DRAW);
+        branchThreeIndexBuffer.itemSize=1;
+        // enter total number of indicies
+        branchThreeIndexBuffer.numItems=branch3IndexPoints.length;  
+//
+// now set up normal buffer
+//
+       branchThreeNormalBuffer=gl.createBuffer();
+       gl.bindBuffer(gl.ARRAY_BUFFER, branchThreeNormalBuffer);
+       
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(branch3NormalPoints),
+            gl.STATIC_DRAW);
+        // enter the size of each vertex (3) for 3D 
+        branchThreeNormalBuffer.itemSize = 3;
+        // enter the number of verticies for numItems
+        branchThreeNormalBuffer.numItems = (branch3NormalPoints.length)/3;
+//
+// set up barycentric
+//
+       branchThreeBarycentricBuffer=gl.createBuffer();
+       gl.bindBuffer(gl.ARRAY_BUFFER, branchThreeBarycentricBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(branch3BarycentricPoints),
+            gl.STATIC_DRAW);
+        // enter the size of each vertex (9) for 3D 
+        branchThreeBarycentricBuffer.itemSize = 3;
+        // enter the number of verticies for numItems
+        branchThreeBarycentricBuffer.numItems = branch3BarycentricPoints.Length/3;
+    }
+    
+    function drawScene() {
+        gl.viewport(0, 0, gl.viewportWidth, gl.viewportHeight);
+        gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+        mat4.perspective(45, gl.viewportWidth / gl.viewportHeight, 0.1, 100.0, pMatrix);
+        mat4.identity(mvMatrix);
+         
+        mat4.translate(mvMatrix, [0.0, 0.0, -10+myZval]);
+        mat4.multiply(mvMatrix, moonRotationMatrix);
+       
+        var branch1 = document.getElementById("branch1").checked;
+        var branch2 = document.getElementById("branch2").checked;
+        var branch3 = document.getElementById("branch3").checked;
+  
+        gl.bindBuffer(gl.ARRAY_BUFFER, lineVertexPositionBuffer);
+        gl.vertexAttribPointer(shaderProgram.vertexPositionAttribute, 
+            lineVertexPositionBuffer.itemSize, gl.FLOAT, false, 0, 0);
+        gl.bindBuffer(gl.ARRAY_BUFFER, lineVertexColorBuffer);
+        gl.vertexAttribPointer(shaderProgram.vertexColorAttribute, 
+            lineVertexColorBuffer.itemSize, gl.FLOAT, false, 0, 0); 
+
+        setMatrixUniforms();
+
+        gl.drawArrays(gl.LINES, 0, lineVertexPositionBuffer.numItems);
+     
+     if(branch1)
+        {
+        gl.bindBuffer(gl.ARRAY_BUFFER, branchOneVertexPositionBuffer); 
+        gl.vertexAttribPointer(shaderProgram.vertexPositionAttribute, 
+            branchOneVertexPositionBuffer.itemSize, gl.FLOAT, false, 0, 0);
+            
+        gl.bindBuffer(gl.ARRAY_BUFFER, branchOneNormalBuffer);
+        gl.vertexAttribPointer(shaderProgram.vertexNormalAttribute,
+        branchOneNormalBuffer.itemSize, gl.FLOAT, false, 0, 0);
+
+        gl.bindBuffer(gl.ARRAY_BUFFER, branchOneVertexColorBuffer);
+        gl.vertexAttribPointer(shaderProgram.vertexColorAttribute, 
+            branchOneVertexColorBuffer.itemSize, gl.FLOAT, false, 0, 0); 
+            
+        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,branchOneIndexBuffer);
+        
+        gl.bindBuffer(gl.ARRAY_BUFFER, branchOneBarycentricBuffer);
+        gl.vertexAttribPointer(shaderProgram.vertexBarycentricAttribute, 
+            branchOneBarycentricBuffer.itemSize, gl.FLOAT, false, 0, 0); 
+      
+        
+        setMatrixUniforms();
+        gl.drawElements(gl.TRIANGLES, branchOneIndexBuffer.numItems,
+            gl.UNSIGNED_SHORT,0); 
+        }
+        
+        if(branch2)
+        {
+        gl.bindBuffer(gl.ARRAY_BUFFER, branchTwoVertexPositionBuffer); 
+        gl.vertexAttribPointer(shaderProgram.vertexPositionAttribute, 
+            branchTwoVertexPositionBuffer.itemSize, gl.FLOAT, false, 0, 0);
+            
+        gl.bindBuffer(gl.ARRAY_BUFFER, branchTwoNormalBuffer);
+        gl.vertexAttribPointer(shaderProgram.vertexNormalAttribute,
+        branchTwoNormalBuffer.itemSize, gl.FLOAT, false, 0, 0);
+
+        gl.bindBuffer(gl.ARRAY_BUFFER, branchTwoVertexColorBuffer);
+        gl.vertexAttribPointer(shaderProgram.vertexColorAttribute, 
+            branchTwoVertexColorBuffer.itemSize, gl.FLOAT, false, 0, 0); 
+            
+        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,branchTwoIndexBuffer);
+        
+        gl.bindBuffer(gl.ARRAY_BUFFER, branchTwoBarycentricBuffer);
+        gl.vertexAttribPointer(shaderProgram.vertexBarycentricAttribute, 
+            branchTwoBarycentricBuffer.itemSize, gl.FLOAT, false, 0, 0); 
+         
+        setMatrixUniforms();
+        gl.drawElements(gl.TRIANGLES, branchTwoIndexBuffer.numItems,
+            gl.UNSIGNED_SHORT,0); 
+        }
+        
+        if(branch3)
+        {
+        gl.bindBuffer(gl.ARRAY_BUFFER, branchThreeVertexPositionBuffer); 
+        gl.vertexAttribPointer(shaderProgram.vertexPositionAttribute, 
+            branchThreeVertexPositionBuffer.itemSize, gl.FLOAT, false, 0, 0);
+            
+        gl.bindBuffer(gl.ARRAY_BUFFER, branchThreeNormalBuffer);
+        gl.vertexAttribPointer(shaderProgram.vertexNormalAttribute,
+        branchThreeNormalBuffer.itemSize, gl.FLOAT, false, 0, 0);
+
+        gl.bindBuffer(gl.ARRAY_BUFFER, branchThreeVertexColorBuffer);
+        gl.vertexAttribPointer(shaderProgram.vertexColorAttribute, 
+            branchThreeVertexColorBuffer.itemSize, gl.FLOAT, false, 0, 0); 
+            
+        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,branchThreeIndexBuffer);
+        
+        gl.bindBuffer(gl.ARRAY_BUFFER, branchThreeBarycentricBuffer);
+        gl.vertexAttribPointer(shaderProgram.vertexBarycentricAttribute, 
+            branchThreeBarycentricBuffer.itemSize, gl.FLOAT, false, 0, 0); 
+      
+        
+        setMatrixUniforms();
+        gl.drawElements(gl.TRIANGLES, branchThreeIndexBuffer.numItems,
+            gl.UNSIGNED_SHORT,0); 
+        }
+            
+        var lighting = document.getElementById("lighting").checked;
+        var theMesh = document.getElementById("mesh").checked;
+                
+        gl.uniform1i(shaderProgram.useLightingUniform, lighting);
+        gl.uniform1i(shaderProgram.useMeshUniform, theMesh);
+         
+        if (lighting) {
+            gl.uniform3f(
+                shaderProgram.ambientColorUniform,
+                parseFloat(document.getElementById("ambientR").value),
+                parseFloat(document.getElementById("ambientG").value),
+                parseFloat(document.getElementById("ambientB").value)
+            );
+            var lightingDirection = [
+                parseFloat(document.getElementById("lightDirectionX").value),
+                parseFloat(document.getElementById("lightDirectionY").value),
+                parseFloat(document.getElementById("lightDirectionZ").value)
+            ];
+            var adjustedLD = vec3.create();
+            vec3.normalize(lightingDirection, adjustedLD);
+            vec3.scale(adjustedLD, -1);
+            gl.uniform3fv(shaderProgram.lightingDirectionUniform, adjustedLD);
+            gl.uniform3f(
+                shaderProgram.directionalColorUniform,
+                parseFloat(document.getElementById("directionalR").value),
+                parseFloat(document.getElementById("directionalG").value),
+                parseFloat(document.getElementById("directionalB").value)
+            );
+        }
+    }
+  
+    function tick() {
+        requestAnimFrame(tick);
+        drawScene();
+    }
+ 
+    var mouseDown = false;
+    var lastMouseX = null;
+    var lastMouseY = null;
+
+    var moonRotationMatrix = mat4.create();
+    mat4.identity(moonRotationMatrix);
+    mat4.rotate(moonRotationMatrix, degToRad(-70), [1, 0, 0]);
+    mat4.rotate(moonRotationMatrix, degToRad(-45), [0, 0, 1]);
+ 
+
+    function handleMouseDown(event) {
+        mouseDown = true;
+        lastMouseX = event.clientX;
+        lastMouseY = event.clientY;
+    }
+
+
+    function handleMouseUp(event) {
+        mouseDown = false;
+    }
+
+    function handleMouseMove(event) {
+        if (!mouseDown) {
+            return;
+        }
+        var newX = event.clientX;
+        var newY = event.clientY;
+
+        var deltaX = newX - lastMouseX;
+        var newRotationMatrix = mat4.create();
+        mat4.identity(newRotationMatrix);
+         
+        mat4.rotate(newRotationMatrix, degToRad(deltaX / 2), [0, 1, 0]);
+
+        var deltaY = newY - lastMouseY;
+        mat4.rotate(newRotationMatrix, degToRad(deltaY / 2), [1, 0, 0]);
+
+        mat4.multiply(newRotationMatrix, moonRotationMatrix, moonRotationMatrix);
+
+        lastMouseX = newX;
+        lastMouseY = newY;
+    }
+ function resetGraphics(){
+      mvMatrix = mat4.create();
+      myZval=0;
+      rFunction=0;
+      var newRotationMatrix = mat4.create();
+      mat4.identity(newRotationMatrix);
+  
+      moonRotationMatrix = mat4.create();
+      mat4.identity(moonRotationMatrix);
+      mat4.rotate(moonRotationMatrix, degToRad(-70), [1, 0, 0]);
+      mat4.rotate(moonRotationMatrix, degToRad(-45), [0, 0, 1]);
+ 
+      mat4.multiply(newRotationMatrix, moonRotationMatrix, moonRotationMatrix);
+     }
+     var resetFlag=true;
+     function resetBackground(){
+         if(resetFlag)
+         {
+           gl.clearColor(0,0,0,1);
+           resetFlag=false;
+       }
+         else 
+         {
+             gl.clearColor(1,1,1,1);
+             resetFlag=true;
+         }
+        gl.enable(gl.DEPTH_TEST); 
+     }
+ 
+    var canvas;
+    function webGLStart() {
+        canvas = document.getElementById("myGraphicsCanvas");
+         
+        if(initGL(canvas))
+        {
+        initShaders();
+        initBuffers();
+        gl.clearColor(1,1,1,1);
+        gl.enable(gl.DEPTH_TEST);
+         canvas.onmousedown = handleMouseDown;
+        document.onmouseup = handleMouseUp;
+        document.onmousemove = handleMouseMove;
+        setMouseWheelEvent();
+        tick();
+        }
+        else 
+        {
+             canvas.textContent = "Canvas not supported";
+          }
+        
+    }
+    function setMouseWheelEvent(){
+        var mousewheelevt=(/Firefox/i.test(navigator.userAgent))?
+        "DOMMouseScroll" : "mousewheel"; //FF doesn't recognize mousewheel as of FF3.x
+ 
+        if (canvas.attachEvent) //if IE (and Opera depending on user setting)
+          canvas.attachEvent("on"+mousewheelevt, zoomimage);
+        else if (canvas.addEventListener) //WC3 browsers
+          canvas.addEventListener(mousewheelevt, zoomimage, false);
+    }
+
+    var myZval=0;
+    function zoomimage(e){
+        var evt=window.event || e; //equalize event object
+         var delta=evt.detail? evt.detail*(-120) : 
+            evt.wheelDelta; //delta returns +120 when wheel is scrolled up, -120 when scrolled down
+    if(delta===120)
+    {
+       myZval+=0.2;
+    }   
+    else if(delta===-120)
+    {
+    myZval-=0.2;
+    };
+     
+    if (evt.preventDefault) //disable default wheel action of scrolling page
+        evt.preventDefault();
+    else
+    return false;
+ 
+    }
+    
+    
+    
+    
+</script>
+
+<script id="shader-fs" type="x-shader/x-fragment">
+ #extension GL_OES_standard_derivatives : enable
+  precision mediump float;
+  varying vec3 vLightWeighting;
+  varying vec3 vColor;
+  varying vec3 vBC;
+  uniform bool uUseMesh;
+   
+  float edgeFactor(){
+    vec3 d = fwidth(vBC);
+    vec3 a3 = smoothstep(vec3(0.0), d*0.75, vBC);
+    return min(min(a3.x, a3.y), a3.z);
+  }
+   
+    
+  void main(void) {
+        if(uUseMesh)
+        {
+           gl_FragColor = vec4(mix(vec3(0.0), vColor * vLightWeighting, edgeFactor()),1); 
+        }
+        else
+        {
+            gl_FragColor=vec4(vColor*vLightWeighting,1);
+        }
+        
+     }
+</script>
+
+<script id="shader-vs" type="x-shader/x-vertex">
+    
+    attribute vec3 aVertexPosition;
+    attribute vec3 aVertexNormal;
+    attribute vec3 aVertexColor;
+    attribute vec3 aVertexBarycentric;
+    uniform mat4 uMVMatrix;
+    uniform mat4 uPMatrix;
+    uniform mat3 uNMatrix;
+    uniform vec3 uAmbientColor;
+    uniform vec3 uLightingDirection;
+    uniform vec3 uDirectionalColor;
+    uniform bool uUseLighting;
+    
+    varying vec3 vLightWeighting;
+    varying vec3 vColor;
+    varying vec3 vBC;
+     
+    void main(void) {
+        gl_Position = uPMatrix * uMVMatrix * vec4(aVertexPosition, 1.0);
+       
+         if (!uUseLighting) {
+            vLightWeighting = vec3(1.0, 1.0, 1.0);
+        } else {
+           vec3 transformedNormal = uNMatrix * aVertexNormal;
+          float dot1=dot(transformedNormal,uLightingDirection);
+          float dValue;
+          float dTest=0.0;
+          if(dot1<=dTest)
+              dValue=-dot1;
+          else
+              dValue=dot1;             
+              vLightWeighting = uAmbientColor + uDirectionalColor * dValue;
+        }
+        vBC=aVertexBarycentric;
+        vColor=aVertexColor;
+    }
+</script>
+
+
+
+</head>
+
+
+<body onload="webGLStart();" >
+    
+    <table id="table1">
+    
+    <tr>
+        <td>
+            <canvas id="myGraphicsCanvas" style="border:1px solid #000000;" width="600"
+            height="600" ></canvas>
+        </td> 
+        <td class="head1" >
+            <p class="heading1" > Drag to rotate.  Use mouse wheel to zoom.</p>
+            <table id="table2"  >
+                                     
+                <tr>
+                   <td colspan="3" class="head2">Choose branch:</td>
+                    
+                </tr> 
+                <tr>
+                    <td class="branch1">
+                        Branch 1 <input type="checkbox"  id="branch1"
+                                       checked="checked" name="branch1" />
+                    <td class="branch2">
+                        Branch 2<input type="checkbox" id="branch2"
+                                       checked="checked" name="branch2" /> 
+                    <td class="branch3">
+                        Branch 3<input type="checkbox" id="branch3"
+                                       checked="checked" name="branch3" /> 
+                </tr>
+               
+                <tr>
+                       <td>Shading <input type="checkbox" id="lighting" 
+                                            name="Lighting" />
+                       <td> Wire Mesh<input type="checkbox" id="mesh" 
+                                                checked="checked" name="WireMesh" /> 
+                </tr>
+  
+ 
+                <tr>
+                    <td> <input type="button" value="Click to reset graphics" 
+                           onclick="resetGraphics()"/><br/> 
+                    </td>
+                    <td><input type="button" value="Click to switch background" 
+                           onclick="resetBackground()"/><br/> 
+                        
+                    </td>
+                    <td></td>
+                </tr>
+                <tr>
+                    <td class="head1" colspan="3"> Lighting direction and color: </td>
+                </tr>
+                <tr class="trow1">                   
+                    <td>X: <input type="text" id="lightDirectionX" value="5" size="3" />
+                    <td>Y: <input type="text" id="lightDirectionY" value="0" size="3" />
+                     <td>Z: <input type="text" id="lightDirectionZ" value="0" size="3" />
+                 </tr>
+                 <tr>
+                     <td>R: <input type="text" id="directionalR" value="1.0" size="3" />
+                     <td>G: <input type="text" id="directionalG" value="1.0" size="3" />
+                     <td>B: <input type="text" id="directionalB" value="1.0" size="3"/>
+                 </tr>
+                  <tr> <td> <br></td> </tr>
+                 <tr>
+                    <td colspan="3"> Ambient light:  </td>
+                </tr>
+               
+                
+                <tr>
+                    <td>R: <input type="text" id="ambientR" value="0.2" size="3"/>
+                    <td>G: <input type="text" id="ambientG" value="0.2" size="3"/>
+                    <td>B: <input type="text" id="ambientB" value="0.2" size="3"/>
+                </tr>
+            </table>
+        </td>
+    </tr>
+    </table>
+    
+ 
+</body>
+
+</html>

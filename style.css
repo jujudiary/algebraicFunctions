@@ -1,0 +1,59 @@
+
+td.branch2 {
+ color: rgb(0,0,255);
+ font-weight: bold;
+ font-size:16pt;
+ 
+}
+td.branch1{
+    color:Crimson;
+    font-weight: bold;
+    font-size:16pt;
+  
+}
+td.branch3{
+    color:DarkGoldenRod;
+    font-weight: bold;
+    font-size:16pt;
+   
+}
+td.head1{
+    font-weight: bold;
+    font-size:16pt;
+    text-align:left;
+    }
+    
+    tr.trow1{
+    font-weight: bold;
+    font-size:8pt;
+    text-align:left;
+    }
+     
+td.head2{
+    font-weight: bold;
+    font-size:16pt;
+    text-align:left;
+    }
+    
+table#table1 {
+    border: 0;
+    column-width: 600px;
+    column-count: 2;
+}
+     
+table#table2 {
+    background-color: #f1f1c1;
+    column-width: 200px;
+    column-count: 3;
+    border: 1px;
+    border-style: solid;
+    border-color: #000000;
+}
+
+
+p.heading1 {
+    font-weight: bold;
+    font-size:16pt;
+    text-align:left;
+      
+}
